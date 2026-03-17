@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[oc]
+.env
+.adk/
+jobseeker/.adk/
+jobseeker/__pycache__/
+jobseeker/token.json
+jobseeker/credentials.json
+.git/
+*.md
