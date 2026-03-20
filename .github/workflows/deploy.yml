@@ -73,7 +73,7 @@ jobs:
       - name: Get existing webhook URL
         id: webhook
         run: |
-          URL=""
+          URL="https://placeholder.run.app"
           if gcloud run services describe jobseeker-bot --region "${REGION:-europe-west1}" --quiet 2>/dev/null; then
             URL=$(gcloud run services describe jobseeker-bot --region "${REGION:-europe-west1}" --format="value(status.url)" 2>/dev/null || true)
           fi
