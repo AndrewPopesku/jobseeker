@@ -16,4 +16,4 @@ variable "langsmith_project"    { default = "jobseeker" }
 variable "google_credentials_file" { default = "../jobseeker/credentials.json" }
 variable "google_token_file"       { default = "../jobseeker/token.json" }
 
-variable "webhook_url" { default = "" }
+variable "webhook_url" { default = "https://placeholder.run.app" }
