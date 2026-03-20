@@ -1,0 +1,123 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load .env
+        run: |
+          echo '${{ secrets.ENV_FILE }}' > .env
+          set -o allexport
+          source .env
+          set +o allexport
+          env >> "$GITHUB_ENV"
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Build and push bot image
+        run: |
+          docker build --platform linux/amd64 \
+            -t "gcr.io/$GCP_PROJECT_ID/jobseeker-bot:latest" .
+          docker push "gcr.io/$GCP_PROJECT_ID/jobseeker-bot:latest"
+
+      - name: Build and push compiler image
+        run: |
+          docker build --platform linux/amd64 \
+            -t "gcr.io/$GCP_PROJECT_ID/jobseeker-compiler:latest" \
+            -f compiler/Dockerfile .
+          docker push "gcr.io/$GCP_PROJECT_ID/jobseeker-compiler:latest"
+
+      - name: Get image digests
+        id: digests
+        run: |
+          BOT_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "gcr.io/$GCP_PROJECT_ID/jobseeker-bot:latest")
+          COMPILER_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "gcr.io/$GCP_PROJECT_ID/jobseeker-compiler:latest")
+          echo "bot=$BOT_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "compiler=$COMPILER_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Write credential files for Terraform
+        run: |
+          cp jobseeker/credentials.json /tmp/credentials.json 2>/dev/null || echo "$GOOGLE_CREDENTIALS_JSON" > /tmp/credentials.json
+          cp jobseeker/token.json /tmp/token.json 2>/dev/null || echo "$GOOGLE_TOKEN_JSON" > /tmp/token.json
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init -upgrade -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="prefix=jobseeker"
+
+      - name: Get existing webhook URL
+        id: webhook
+        run: |
+          URL=""
+          if gcloud run services describe jobseeker-bot --region "${REGION:-europe-west1}" --quiet 2>/dev/null; then
+            URL=$(gcloud run services describe jobseeker-bot --region "${REGION:-europe-west1}" --format="value(status.url)" 2>/dev/null || true)
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var="project_id=$GCP_PROJECT_ID" \
+            -var="region=${REGION:-europe-west1}" \
+            -var="image=${{ steps.digests.outputs.bot }}" \
+            -var="compiler_image=${{ steps.digests.outputs.compiler }}" \
+            -var="telegram_bot_token=$TELEGRAM_BOT_TOKEN" \
+            -var="telegram_user_id=$TELEGRAM_USER_ID" \
+            -var="google_api_key=$GOOGLE_API_KEY" \
+            -var="google_drive_folder_id=$GOOGLE_DRIVE_FOLDER_ID" \
+            -var="google_sheets_id=$GOOGLE_SHEETS_ID" \
+            -var="google_sheets_gid=$GOOGLE_SHEETS_GID" \
+            -var="langsmith_api_key=$LANGSMITH_API_KEY" \
+            -var="google_credentials_file=/tmp/credentials.json" \
+            -var="google_token_file=/tmp/token.json" \
+            -var="webhook_url=${{ steps.webhook.outputs.url }}"
+
+      - name: Re-apply if webhook URL changed
+        working-directory: terraform
+        run: |
+          REAL_URL=$(terraform output -raw webhook_url)
+          OLD_URL="${{ steps.webhook.outputs.url }}"
+          if [ "$REAL_URL" != "$OLD_URL" ]; then
+            echo "Webhook URL changed to $REAL_URL, re-applying..."
+            terraform apply -input=false -auto-approve \
+              -var="project_id=$GCP_PROJECT_ID" \
+              -var="region=${REGION:-europe-west1}" \
+              -var="image=${{ steps.digests.outputs.bot }}" \
+              -var="compiler_image=${{ steps.digests.outputs.compiler }}" \
+              -var="telegram_bot_token=$TELEGRAM_BOT_TOKEN" \
+              -var="telegram_user_id=$TELEGRAM_USER_ID" \
+              -var="google_api_key=$GOOGLE_API_KEY" \
+              -var="google_drive_folder_id=$GOOGLE_DRIVE_FOLDER_ID" \
+              -var="google_sheets_id=$GOOGLE_SHEETS_ID" \
+              -var="google_sheets_gid=$GOOGLE_SHEETS_GID" \
+              -var="langsmith_api_key=$LANGSMITH_API_KEY" \
+              -var="google_credentials_file=/tmp/credentials.json" \
+              -var="google_token_file=/tmp/token.json" \
+              -var="webhook_url=$REAL_URL"
+          fi
