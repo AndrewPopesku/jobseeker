@@ -21,7 +21,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from langsmith.integrations.google_adk import configure_google_adk
-from telegram import Update, constants
+from telegram import BotCommand, Update, constants
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -258,9 +258,16 @@ def main() -> None:
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN not set in environment / .env")
 
+    async def post_init(application: Application) -> None:
+        await application.bot.set_my_commands([
+            BotCommand("start", "Show welcome message"),
+            BotCommand("reset", "Reset session and start fresh 🔄"),
+        ])
+
     app = (
         Application.builder()
         .token(token)
+        .post_init(post_init)
         .build()
     )
 
