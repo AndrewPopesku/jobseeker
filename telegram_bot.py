@@ -11,8 +11,10 @@ Usage:
 """
 
 import asyncio
+import json
 import logging
 import os
+from enum import Enum
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -47,10 +49,13 @@ _ARTIFACTS_DIR = Path(__file__).parent / "jobseeker" / ".adk" / "artifacts"
 _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 from jobseeker.agent import root_agent  # noqa: E402 — import after env is loaded
+from jobseeker.cv_creator_agent import cv_creator_agent  # noqa: E402
+from jobseeker.google_tools import load_cv_data_from_drive, save_cv_data_to_drive  # noqa: E402
 
 _session_service = InMemorySessionService()
 _artifact_service = FileArtifactService(root_dir=_ARTIFACTS_DIR)
 
+# General-purpose agent runner (root_agent handles routing)
 _runner = Runner(
     app_name="jobseeker",
     agent=root_agent,
@@ -58,8 +63,29 @@ _runner = Runner(
     artifact_service=_artifact_service,
 )
 
+# Dedicated CV runner — calls cv_creator_agent directly for /tailor
+_cv_runner = Runner(
+    app_name="jobseeker_tailor",
+    agent=cv_creator_agent,
+    session_service=_session_service,
+    artifact_service=_artifact_service,
+)
+
 # One persistent session per Telegram user_id  →  agent remembers context
 _sessions: dict[int, str] = {}
+_cv_sessions: dict[int, str] = {}
+
+# ---------------------------------------------------------------------------
+# Conversation state machine
+# Tracks per-user "waiting for input" states for multi-step commands.
+# ---------------------------------------------------------------------------
+
+class ConvState(Enum):
+    NORMAL = "normal"
+    WAITING_CV_DATA = "waiting_cv_data"
+    WAITING_JOB_DESC = "waiting_job_desc"
+
+_conv_state: dict[int, ConvState] = {}
 
 # ---------------------------------------------------------------------------
 # Message batch buffer
@@ -110,6 +136,17 @@ async def _get_or_create_session(tg_user_id: int) -> str:
     return _sessions[tg_user_id]
 
 
+async def _get_or_create_cv_session(tg_user_id: int) -> str:
+    if tg_user_id not in _cv_sessions:
+        session = await _session_service.create_session(
+            app_name="jobseeker_tailor",
+            user_id=str(tg_user_id),
+        )
+        _cv_sessions[tg_user_id] = session.id
+        log.info("Created CV session %s for Telegram user %d", session.id, tg_user_id)
+    return _cv_sessions[tg_user_id]
+
+
 async def _run_agent(tg_user_id: int, parts: list[types.Part]) -> str:
     """Send parts (text/files) to the agent and return its final text response."""
     session_id = await _get_or_create_session(tg_user_id)
@@ -126,6 +163,55 @@ async def _run_agent(tg_user_id: int, parts: list[types.Part]) -> str:
                     response_parts.append(part.text)
 
     return "\n".join(response_parts) or "_(no response)_"
+
+
+async def _run_tailor(tg_user_id: int, job_desc: str, update: Update, bot) -> None:
+    """Load CV data from Drive and run cv_creator_agent with the job description."""
+    await bot.send_chat_action(
+        chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING
+    )
+
+    try:
+        user_data = load_cv_data_from_drive()
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Could not load CV data from Drive: {e}")
+        return
+
+    if not user_data:
+        await update.message.reply_text(
+            "No CV data found. Use /update_cv_data to save your info first."
+        )
+        return
+
+    prompt = (
+        "Job description:\n"
+        f"{job_desc}\n\n"
+        "My CV data:\n"
+        f"{json.dumps(user_data, ensure_ascii=False)}\n\n"
+        "Tailor my CV for this job, compile it, upload to Drive, and log to Sheets."
+    )
+
+    session_id = await _get_or_create_cv_session(tg_user_id)
+    response_parts: list[str] = []
+
+    try:
+        async for event in _cv_runner.run_async(
+            user_id=str(tg_user_id),
+            session_id=session_id,
+            new_message=types.Content(role="user", parts=[types.Part(text=prompt)]),
+        ):
+            if event.is_final_response() and event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        response_parts.append(part.text)
+    except Exception as e:
+        log.exception("Tailor agent error for user %d", tg_user_id)
+        await update.message.reply_text(f"⚠️ Tailor error: {e}")
+        return
+
+    reply = "\n".join(response_parts) or "_(no response)_"
+    for chunk in _split(reply, 4096):
+        await update.message.reply_text(chunk)
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +239,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "• Create a tailored CV (LaTeX → PDF)\n"
         "• Upload it to Google Drive\n"
         "• Log the application to Google Sheets\n\n"
-        "Just tell me what you're looking for, or provide your CV data and a job link.",
+        "Commands:\n"
+        "• /update\\_cv\\_data — save your CV data\n"
+        "• /read\\_cv\\_data — view stored CV data\n"
+        "• /tailor — tailor CV for a job\n"
+        "• /reset — start a fresh session\n\n"
+        "Just tell me what you're looking for, or use /tailor for a one-shot workflow.",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
@@ -164,7 +255,62 @@ async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     tg_user_id = update.effective_user.id
     if tg_user_id in _sessions:
         del _sessions[tg_user_id]
+    if tg_user_id in _cv_sessions:
+        del _cv_sessions[tg_user_id]
+    _conv_state.pop(tg_user_id, None)
     await update.message.reply_text("Session reset. Starting fresh 🔄")
+
+
+async def cmd_update_cv_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update):
+        return
+    tg_user_id = update.effective_user.id
+    _conv_state[tg_user_id] = ConvState.WAITING_CV_DATA
+    await update.message.reply_text(
+        "Send your CV data as JSON.\n\n"
+        "Expected top-level keys: name, location, phone, email, linkedin, summary, "
+        "skills, experience, education, hackathons (optional), certifications (optional).\n\n"
+        "If you send plain text instead of JSON, it will be stored as-is and the agent "
+        "will use it as context when tailoring your CV."
+    )
+
+
+async def cmd_read_cv_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update):
+        return
+    await update.message.reply_text("Fetching your CV data from Drive…")
+    try:
+        data = load_cv_data_from_drive()
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Could not load CV data: {e}")
+        return
+
+    if not data:
+        await update.message.reply_text(
+            "No CV data stored yet. Use /update_cv_data to save yours."
+        )
+        return
+
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    for chunk in _split(f"Your stored CV data:\n\n```json\n{text}\n```", 4096):
+        await update.message.reply_text(chunk, parse_mode=constants.ParseMode.MARKDOWN)
+
+
+async def cmd_tailor(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update):
+        return
+    tg_user_id = update.effective_user.id
+
+    # Support inline usage: /tailor <job description or URL>
+    inline = " ".join(ctx.args) if ctx.args else ""
+    if inline:
+        await _run_tailor(tg_user_id, inline, update, ctx.bot)
+    else:
+        _conv_state[tg_user_id] = ConvState.WAITING_JOB_DESC
+        await update.message.reply_text(
+            "Paste the job description or a job URL (Indeed / LinkedIn) and I'll "
+            "tailor your CV, upload it to Drive, and log the application to Sheets."
+        )
 
 
 async def _download_tg_file(file_obj, bot) -> bytes:
@@ -184,10 +330,47 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
     tg_user_id = update.effective_user.id
     msg = update.message
+    text = msg.text or msg.caption or ""
+
+    # ------------------------------------------------------------------
+    # State machine: handle responses to multi-step commands
+    # ------------------------------------------------------------------
+    state = _conv_state.get(tg_user_id, ConvState.NORMAL)
+
+    if state == ConvState.WAITING_CV_DATA:
+        _conv_state[tg_user_id] = ConvState.NORMAL
+        if not text:
+            await update.message.reply_text("Please send your CV data as text or JSON.")
+            return
+        # Try to parse as JSON; fall back to raw text storage
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = {"raw": text}
+        try:
+            url = save_cv_data_to_drive(data)
+            await update.message.reply_text(
+                f"CV data saved to Drive ✅\n{url}"
+            )
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Could not save CV data: {e}")
+        return
+
+    if state == ConvState.WAITING_JOB_DESC:
+        _conv_state[tg_user_id] = ConvState.NORMAL
+        if not text:
+            await update.message.reply_text(
+                "Please send the job description as text."
+            )
+            return
+        await _run_tailor(tg_user_id, text, update, ctx.bot)
+        return
+
+    # ------------------------------------------------------------------
+    # Normal flow — collect parts and send to root_agent via batch buffer
+    # ------------------------------------------------------------------
     parts: list[types.Part] = []
 
-    # Text (standalone or as caption)
-    text = msg.text or msg.caption or ""
     if text:
         parts.append(types.Part(text=text))
 
@@ -216,13 +399,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     # --- Batch buffering ---
-    # Append this chunk's parts to the user's buffer
     if tg_user_id not in _batch_parts:
         _batch_parts[tg_user_id] = []
     _batch_parts[tg_user_id].extend(parts)
-    _batch_update[tg_user_id] = update  # keep the latest update for replying
+    _batch_update[tg_user_id] = update
 
-    # Cancel existing debounce timer and restart it
     existing = _batch_tasks.get(tg_user_id)
     if existing and not existing.done():
         existing.cancel()
@@ -261,6 +442,9 @@ def main() -> None:
     async def post_init(application: Application) -> None:
         await application.bot.set_my_commands([
             BotCommand("start", "Show welcome message"),
+            BotCommand("update_cv_data", "Update your personal CV data"),
+            BotCommand("read_cv_data", "View your stored CV data"),
+            BotCommand("tailor", "Tailor CV for a job and upload to Drive"),
             BotCommand("reset", "Reset session and start fresh 🔄"),
         ])
 
@@ -273,6 +457,9 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("update_cv_data", cmd_update_cv_data))
+    app.add_handler(CommandHandler("read_cv_data", cmd_read_cv_data))
+    app.add_handler(CommandHandler("tailor", cmd_tailor))
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.PHOTO)
         & ~filters.COMMAND,
