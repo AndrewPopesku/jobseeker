@@ -79,9 +79,10 @@ resource "google_secret_manager_secret_iam_member" "access" {
 # ---------------------------------------------------------------------------
 
 resource "google_cloud_run_v2_service" "bot" {
-  name     = "jobseeker-bot"
-  location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "jobseeker-bot"
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
 
   template {
     service_account = data.google_compute_default_service_account.default.email
@@ -211,9 +212,10 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
 # ---------------------------------------------------------------------------
 
 resource "google_cloud_run_v2_service" "compiler" {
-  name     = "jobseeker-compiler"
-  location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "jobseeker-compiler"
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
 
   template {
     service_account = data.google_compute_default_service_account.default.email
