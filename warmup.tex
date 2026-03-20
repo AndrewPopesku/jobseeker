@@ -1,0 +1,165 @@
+%-------------------------
+% Resume in Latex
+% Author : Andrii Popesku
+% Tailored for: Citco Full Stack Developer
+% License : MIT
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{fontawesome5}
+
+\pagestyle{fancy}
+\fancyhf{} 
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large\bfseries
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Ensure that generate pdf is machine readable/ATS parsable (pdflatex only)
+\ifdefined\pdfgentounicode
+  \input{glyphtounicode}
+  \pdfgentounicode=1
+\fi
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge \scshape Andrii Popesku} \\ \vspace{3pt}
+    \small Tullamore, Ireland (Open to relocation to Dublin) $|$ \textbf{STAMP 4 VISA HOLDER} \\
+    \small \faPhone\ +353 (83) 305 2511 $|$ \faEnvelope\ \href{mailto:uandworker@gmail.com}{uandworker@gmail.com} $|$ 
+    \faLinkedin\ \href{https://linkedin.com/in/uand}{linkedin.com/in/uand}
+\end{center}
+
+%-----------SUMMARY-----------
+\section{Summary}
+\small{Performance-driven \textbf{Full Stack Developer} with over 2.5 years of experience specializing in \textbf{Python (FastAPI)} and modern \textbf{TypeScript/React} ecosystems. Expert in architecting \textbf{RESTful Web Services} and \textbf{Agentic AI} frameworks (LangChain) within cloud-native environments. Award-winning builder in the \textbf{Fintech space}, recognized for delivering insurance and pension solutions under tight deadlines. Proven ability to implement \textbf{Test-Driven Development (TDD)}, manage automated CI/CD pipelines, and collaborate in service-oriented enterprise architectures.}
+
+%-----------TECHNICAL SKILLS-----------
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Backend}{: \textbf{Python (Expert)}, \textbf{FastAPI}, Pydantic, REST APIs, Node.js, \textbf{Pytest (TDD)}, Asynchronous Programming.} \\
+     \textbf{Frontend}{: \textbf{TypeScript}, \textbf{React 18}, \textbf{Material UI (MUI)}, JavaScript (ES6+), Single-Page Applications (SPA).} \\
+     \textbf{AI \& GenAI}{: LangChain, Agentic AI Orchestration, Google ADK, LLMs (GPT-4, Claude), Vector Databases (PGVector).} \\
+     \textbf{Cloud \& DevOps}{: \textbf{AWS (ECS, S3, CloudFormation exposure)}, Docker, GCP, Git, GitHub Actions, Jenkins.} \\
+     \textbf{Tools}{: Amazon Q, GitHub Copilot, Jira, Bitbucket, Postman, Linux (Terminal-first workflow).}
+    }}
+ \end{itemize}
+
+%-----------FINANCIAL INDUSTRY EXPERIENCE-----------
+\section{Hackathon}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Give(a)Go Hiring Hackathon $|$ \textnormal{\small \textit{Winner -- Kota Challenge}}}{Dublin, Ireland}
+      {Lead Full Stack Developer}{March 2026}
+      \resumeItemListStart
+        \resumeItem{Researched and architected a \textbf{Fintech solution} for Kota's health insurance department in a 4-hour high-pressure sprint.}
+        \resumeItem{Developed a React-based SPA featuring a human-in-the-loop AI chatbot and a \textbf{pension/plan calculator}.}
+        \resumeItem{Integrated business logic using \textbf{Python and FastAPI}, translating direct insights from Kota’s leadership into a secure, functional prototype.}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+%-----------EXPERIENCE-----------
+\section{Experience}
+  \resumeSubHeadingListStart
+
+    \resumeSubheading
+      {shablon.co}{}
+      {Founder \& Solo Developer (Full-Stack focus)}{Sept. 2025 -- Present}
+      \resumeItemListStart
+        \resumeItem{Launched a cloud-based video automation platform utilizing a \textbf{Python (FastAPI)} and \textbf{React 18/MUI} stack.}
+        \resumeItem{Implemented \textbf{Agentic workflows} using LangChain to automate multi-step reasoning for content production.}
+        \resumeItem{Applied \textbf{TDD best practices} using Pytest to ensure backend resilience for resource-intensive AI compute tasks.}
+        \resumeItem{Deployed and managed containerized services via \textbf{Docker} and GCP, maintaining high availability for global users.}
+      \resumeItemListEnd
+
+    \resumeSubheading
+      {Global Staffing Support}{Chernivtsi, Ukraine}
+      {AI Software Engineer}{Aug. 2024 -- Aug. 2025}
+      \resumeItemListStart
+        \resumeItem{Developed RAG solutions for B2B platforms, improving data retrieval accuracy by 80\% for enterprise clients.}
+        \resumeItem{Built and maintained integrations for \textbf{7+ third-party SaaS APIs} (Slack, Drive, etc.) into a service-oriented architecture.}
+        \resumeItem{Optimized \textbf{PostgreSQL} vector databases, reducing retrieval latency by 60\% for high-concurrency requests.}
+        \resumeItem{Contributed to automated build processes and systems documentation to improve team support efficiencies.}
+      \resumeItemListEnd
+
+    \resumeSubheading
+      {Global Staffing Support (Intern)}{}
+      {AI Software Engineer}{April 2024 -- Aug. 2024}
+      \resumeItemListStart
+        \resumeItem{Automated unstructured document parsing using \textbf{Python} and NLP pipelines, reducing manual review time by 50\%.}
+        \resumeItem{Collaborated with senior leads on debugging and researching alternative technologies for architectural review.}
+      \resumeItemListEnd
+
+    \resumeSubheading
+      {Freelance}{}
+      {Python Automation Developer, Video Editor}{March 2023 -- April 2024}
+      \resumeItemListStart
+        \resumeItem{Developed custom automation scripts and Restful services for video production products}
+      \resumeItemListEnd
+
+  \resumeSubHeadingListEnd
+
+%-----------EDUCATION-----------
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Yuriy Fedkovych Chernivtsi National University}{Ukraine}
+      {B.S. in Applied Mathematics (STEM / Engineering Equivalent)}{2021 -- 2025}
+  \resumeSubHeadingListEnd
+
+\end{document}

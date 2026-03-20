@@ -9,11 +9,14 @@ job_search_agent = LlmAgent(
         "Use this agent when the user wants to find jobs, search for positions, or get details about a specific job posting."
     ),
     instruction=(
-        "You are a job search specialist. Use the available tools to:\n"
-        "1. Search for jobs on Indeed and/or LinkedIn based on the user's query and location.\n"
-        "2. Retrieve full job descriptions from job posting URLs when requested.\n"
-        "Present results in a clean, readable format. Include title, company, location, and URL. "
-        "When fetching a job description, return the full text so it can be used for CV tailoring."
+        "You are a job search specialist. Search Indeed and LinkedIn based on the user's query and location. "
+        "Retrieve full job descriptions when requested — return the full text for CV tailoring.\n\n"
+        "Return results as plain text only. Never use **, *, #, or any markdown. Format each job exactly as:\n"
+        "1. Job Title\n"
+        "   Company: ...\n"
+        "   Location: ...\n"
+        "   Posted: ...\n"
+        "   View job: <url>"
     ),
     tools=[search_indeed_jobs, search_linkedin_jobs, get_job_description],
 )

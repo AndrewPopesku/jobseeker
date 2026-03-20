@@ -1,0 +1,10 @@
+project_id = "your-gcp-project-id"
+image      = "gcr.io/your-gcp-project-id/jobseeker-bot:latest"
+
+telegram_bot_token    = "123456:ABC..."
+telegram_user_id      = "123456789"
+google_api_key        = "AIza..."
+google_drive_folder_id = "your_folder_id"
+google_sheets_id      = "your_sheet_id"
+google_sheets_gid     = "0"
+langsmith_api_key     = "lsv2_..."

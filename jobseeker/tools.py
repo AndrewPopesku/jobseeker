@@ -25,7 +25,7 @@ def search_indeed_jobs(query: str, location: str = "", num_results: int = 10) ->
         resp = session.get(url, timeout=15)
         resp.raise_for_status()
     except Exception as e:
-        return [{"error": f"Failed to fetch Indeed: {e}"}]
+        raise RuntimeError(f"Failed to fetch Indeed: {e}") from e
 
     soup = BeautifulSoup(resp.text, "html.parser")
     jobs = []
@@ -79,7 +79,7 @@ def search_linkedin_jobs(query: str, location: str = "", num_results: int = 10) 
         resp = requests.get(url, impersonate="chrome124", timeout=15)
         resp.raise_for_status()
     except Exception as e:
-        return [{"error": f"Failed to fetch LinkedIn: {e}"}]
+        raise RuntimeError(f"Failed to fetch LinkedIn: {e}") from e
 
     soup = BeautifulSoup(resp.text, "html.parser")
     jobs = []
@@ -132,7 +132,7 @@ def get_job_description(url: str) -> dict:
     is_linkedin = "linkedin.com" in url
 
     if not (is_indeed or is_linkedin):
-        return {"error": "URL must be from indeed.com or linkedin.com"}
+        raise ValueError("URL must be from indeed.com or linkedin.com")
 
     try:
         if is_indeed:
@@ -143,7 +143,7 @@ def get_job_description(url: str) -> dict:
             resp = requests.get(url, impersonate="chrome124", timeout=15)
         resp.raise_for_status()
     except Exception as e:
-        return {"error": f"Failed to fetch job page: {e}"}
+        raise RuntimeError(f"Failed to fetch job page: {e}") from e
 
     soup = BeautifulSoup(resp.text, "html.parser")
 

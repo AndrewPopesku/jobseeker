@@ -20,6 +20,7 @@ from google.adk.artifacts import FileArtifactService
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from langsmith.integrations.google_adk import configure_google_adk
 from telegram import Update, constants
 from telegram.ext import (
     Application,
@@ -30,6 +31,7 @@ from telegram.ext import (
 )
 
 load_dotenv()
+configure_google_adk()
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -71,15 +73,15 @@ async def _get_or_create_session(tg_user_id: int) -> str:
     return _sessions[tg_user_id]
 
 
-async def _run_agent(tg_user_id: int, text: str) -> str:
-    """Send a message to the agent and return its final text response."""
+async def _run_agent(tg_user_id: int, parts: list[types.Part]) -> str:
+    """Send parts (text/files) to the agent and return its final text response."""
     session_id = await _get_or_create_session(tg_user_id)
 
     response_parts: list[str] = []
     async for event in _runner.run_async(
         user_id=str(tg_user_id),
         session_id=session_id,
-        new_message=types.Content(role="user", parts=[types.Part(text=text)]),
+        new_message=types.Content(role="user", parts=parts),
     ):
         if event.is_final_response() and event.content and event.content.parts:
             for part in event.content.parts:
@@ -128,6 +130,12 @@ async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Session reset. Starting fresh 🔄")
 
 
+async def _download_tg_file(file_obj, bot) -> bytes:
+    """Download a Telegram file and return its bytes."""
+    tg_file = await bot.get_file(file_obj.file_id)
+    return bytes(await tg_file.download_as_bytearray())
+
+
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _allowed(update):
         await update.message.reply_text(
@@ -137,8 +145,38 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    user_text = update.message.text
     tg_user_id = update.effective_user.id
+    msg = update.message
+    parts: list[types.Part] = []
+
+    # Text (standalone or as caption)
+    text = msg.text or msg.caption or ""
+    if text:
+        parts.append(types.Part(text=text))
+
+    # Voice / audio
+    voice = msg.voice or msg.audio
+    if voice:
+        data = await _download_tg_file(voice, ctx.bot)
+        mime = voice.mime_type or "audio/ogg"
+        parts.append(types.Part(inline_data=types.Blob(mime_type=mime, data=data)))
+
+    # Document (files)
+    if msg.document:
+        data = await _download_tg_file(msg.document, ctx.bot)
+        mime = msg.document.mime_type or "application/octet-stream"
+        parts.append(types.Part(inline_data=types.Blob(mime_type=mime, data=data)))
+        if not text:
+            parts.append(types.Part(text=f"[file: {msg.document.file_name}]"))
+
+    # Photo (pick largest resolution)
+    if msg.photo:
+        photo = msg.photo[-1]
+        data = await _download_tg_file(photo, ctx.bot)
+        parts.append(types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=data)))
+
+    if not parts:
+        return
 
     # Show typing indicator while the agent works
     await ctx.bot.send_chat_action(
@@ -147,21 +185,14 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     try:
-        reply = await _run_agent(tg_user_id, user_text)
+        reply = await _run_agent(tg_user_id, parts)
     except Exception as e:
         log.exception("Agent error for user %d", tg_user_id)
         reply = f"⚠️ Agent error: {e}"
 
     # Telegram messages max out at 4096 chars — split if needed
     for chunk in _split(reply, 4096):
-        try:
-            await update.message.reply_text(
-                chunk,
-                parse_mode=constants.ParseMode.MARKDOWN,
-            )
-        except Exception:
-            # Agent returned malformed Markdown — send as plain text
-            await update.message.reply_text(chunk)
+        await update.message.reply_text(chunk)
 
 
 def _split(text: str, max_len: int) -> list[str]:
@@ -191,10 +222,26 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("reset", cmd_reset))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.PHOTO)
+        & ~filters.COMMAND,
+        handle_message,
+    ))
 
-    log.info("Bot starting — polling for updates…")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    webhook_base = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+    if webhook_base:
+        port = int(os.environ.get("PORT", "8080"))
+        log.info("Bot starting — webhook mode on port %d", port)
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"{webhook_base}/{token}",
+            allowed_updates=Update.ALL_TYPES,
+        )
+    else:
+        log.info("Bot starting — polling for updates…")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":

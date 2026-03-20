@@ -1,0 +1,13 @@
+[project]
+name = "cv-compiler"
+version = "0.1.0"
+description = "LaTeX → PDF compilation + Google Drive upload microservice"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "python-multipart>=0.0.18",
+    "google-api-python-client>=2.192.0",
+    "google-auth-httplib2>=0.3.0",
+    "google-auth-oauthlib>=1.3.0",
+]

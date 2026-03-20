@@ -1,0 +1,114 @@
+Computer Vision Engineer 
+
+ 
+
+Ash Technologies was founded in 1994 to design and manufacture a range of award-winning electronic magnifiers for the visually impaired. In 2013, Ash decided to apply its innovation and design skills to digital vision and inspection for industry.  
+
+
+
+Based in Naas, Co. Kildare, we have built our reputation for agile innovation, designing, and manufacturing digital inspection systems that enable our target market businesses thrive in a complex environment where inspection, accuracy, tracking, and traceability are intrinsic to our partner’s development and growth. 
+
+ 
+
+Our philosophy is simple; we are curious, we work hard, we are passionate about what we do, and we provide value to our partners through successful delivery and support of our unique solutions. We believe in working closely with our target markets and industries to ensure that our solutions and platforms are relevant and simple to use. 
+
+
+
+Having recently developed and launched ASH’s Machine Learning and Artificial Intelligence platforms for industry, we are growing the team to support the growing demand for ASH’s solutions for Industry.  
+
+
+
+Role Overview 
+
+
+
+We are seeking a Computer Vision Engineer to join our team. This role sits at the intersection of computer vision, machine learning, and production ready software engineering, contributing directly to the development of advanced visual inspection systems. 
+
+
+
+You will work closely with software, embedded, and hardware engineers to design, implement, and deploy vision algorithms that operate in real-world industrial environments. The role involves both algorithm development and practical system integration, with an emphasis on reliability, performance, and maintainability. 
+
+
+
+ 
+
+
+
+Key Responsibilities  
+
+
+
+Design, implement, and optimise computer vision and image processing pipelines for industrial inspection applications 
+Develop and deploy machine learning and deep learning models for defect detection, classification, and measurement 
+Work with Python and C++ codebases across Linux-based systems 
+Integrate vision algorithms with embedded and edge-based hardware platforms  
+Collaborate with cross-functional teams including embedded systems, electronics, optics, and product engineering 
+Evaluate algorithm performance using appropriate metrics and datasets; iterate based on real-world results 
+Contribute to system architecture, code reviews, and technical documentation 
+Support the transition of R&D solutions into production-ready software 
+
+
+ 
+
+
+
+Required Skills & Experience 
+
+
+
+Degree in Computer Science, Software Engineering, Electronic/Electrical Engineering, Applied Physics, or a related discipline 
+Professional experience in computer vision and image processing 
+Experience working with camera sensors, optics, and lighting, including an understanding of how imaging hardware and acquisition conditions affect algorithm performance 
+Strong programming skills in Python and C++ 
+Experience developing on Linux-based systems 
+Practical experience with OpenCV and image processing techniques 
+Familiarity with machine learning / deep learning frameworks (e.g. PyTorch, TensorFlow) 
+Solid understanding of data structures, algorithms, and object-oriented design 
+Strong analytical and problem-solving skills 
+Ability to work independently while collaborating effectively within a multidisciplinary team 
+ 
+
+
+
+Desirable / Additional Experience 
+
+
+
+Exposure to real-time or performance-constrained systems 
+Familiarity with agile development methodologies 
+Experience with version control, CI/CD pipelines, and software quality practices 
+ 
+
+Personal Attributes 
+
+
+
+Comfortable working in a customer-facing role, able to engage with clients and clearly communicate technical concepts in a professional manner 
+Well-organised, with the ability to manage multiple tasks and priorities 
+Collaborative, curious, and solution-oriented 
+High level of integrity and professionalism when handling confidential information 
+Adaptable to evolving project requirements and customer-driven development  
+
+
+Package & Benefits 
+
+
+
+Competitive salary with performance-related bonus 
+Company pension and life cover 
+VHI healthcare 
+Holiday loyalty scheme 
+Career progression and further education support 
+Bike to Work scheme 
+Flexible working model (hybrid remote / onsite) 
+Supportive, technically strong team environment 
+ 
+
+
+Requirements added by the job poster
+
+• Bachelor's Degree
+
+• No need for visa sponsorship
+
+• Working in an onsite setting

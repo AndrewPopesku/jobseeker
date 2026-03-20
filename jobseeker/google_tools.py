@@ -1,46 +1,51 @@
 """
 Google Drive + Sheets integration for job application tracking.
 
-Setup (one-time):
-  1. Go to https://console.cloud.google.com
-  2. Create a project, enable "Google Drive API" and "Google Sheets API"
-  3. Create OAuth 2.0 credentials (Desktop app), download as:
-       jobseeker/credentials.json
-  4. Set env vars (or add to .env):
-       GOOGLE_DRIVE_FOLDER_ID  — ID of the Drive folder where CVs will be stored
-       GOOGLE_SHEETS_ID        — ID of the tracking spreadsheet
-                                 (leave empty to auto-create on first run)
-  5. First run will open a browser to authorise access; token saved to:
-       jobseeker/token.json
+Drive uploads are handled by the compiler service.
+This module handles Sheets logging only.
 """
 
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
+import requests
+import google.auth.transport.requests
+import google.oauth2.id_token
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 _SCOPES = [
-    "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
 _HERE = Path(__file__).parent
-_CREDENTIALS_FILE = _HERE / "credentials.json"
-_TOKEN_FILE = _HERE / "token.json"
+_CREDENTIALS_FILE = Path(os.environ.get("GOOGLE_CREDENTIALS_FILE", str(_HERE / "credentials.json")))
+_TOKEN_FILE = Path(os.environ.get("GOOGLE_TOKEN_FILE", str(_HERE / "token.json")))
+# Secret-mounted files are read-only; keep refreshed tokens in a writable path.
+_WRITABLE_TOKEN_FILE = Path("/tmp/google_sheets_token.json")
 
 _SHEETS_HEADERS = ["job_link", "company", "position", "cv_url", "status"]
 _DEFAULT_STATUS = "draft"
+
+_COMPILER_URL = os.environ.get("COMPILER_SERVICE_URL", "http://localhost:8081")
+
+
+def _auth_headers() -> dict:
+    """Return auth headers for Cloud Run service-to-service calls."""
+    if _COMPILER_URL.startswith("http://"):
+        return {}
+    token = google.oauth2.id_token.fetch_id_token(
+        google.auth.transport.requests.Request(), _COMPILER_URL
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +55,10 @@ _DEFAULT_STATUS = "draft"
 def _get_credentials() -> Credentials:
     creds: Credentials | None = None
 
-    if _TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(_TOKEN_FILE), _SCOPES)
+    for token_path in (_WRITABLE_TOKEN_FILE, _TOKEN_FILE):
+        if token_path.exists():
+            creds = Credentials.from_authorized_user_file(str(token_path), _SCOPES)
+            break
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -68,7 +75,7 @@ def _get_credentials() -> Credentials:
             )
             creds = flow.run_local_server(port=0)
 
-        _TOKEN_FILE.write_text(creds.to_json())
+        _WRITABLE_TOKEN_FILE.write_text(creds.to_json())
 
     return creds
 
@@ -77,19 +84,12 @@ def _get_credentials() -> Credentials:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _sanitize_position(position: str) -> str:
-    """Convert job position to a safe filename segment."""
-    cleaned = re.sub(r"[^\w\s-]", "", position).strip()
-    return re.sub(r"[\s]+", "_", cleaned)
-
-
 def _resolve_tab_name(sheets_svc, sheet_id: str) -> str:
     """Return the tab name from GOOGLE_SHEETS_TAB env var, or look it up by gid."""
     tab_name = os.environ.get("GOOGLE_SHEETS_TAB", "")
     if tab_name:
         return tab_name
 
-    # Look up by gid if provided
     gid = os.environ.get("GOOGLE_SHEETS_GID", "")
     if gid:
         meta = sheets_svc.spreadsheets().get(spreadsheetId=sheet_id).execute()
@@ -98,7 +98,6 @@ def _resolve_tab_name(sheets_svc, sheet_id: str) -> str:
             if str(props.get("sheetId", "")) == gid:
                 return props["title"]
 
-    # Fall back to the first sheet
     meta = sheets_svc.spreadsheets().get(spreadsheetId=sheet_id).execute()
     return meta["sheets"][0]["properties"]["title"]
 
@@ -109,10 +108,7 @@ def _resolve_tab_name(sheets_svc, sheet_id: str) -> str:
 
 def upload_cv_to_drive(pdf_path: str, job_position: str) -> dict:
     """
-    Upload a CV PDF to Google Drive and return the shareable file URL.
-
-    The file is named "Andrii_Popesku_<job_position>.pdf" and stored in the
-    folder specified by the GOOGLE_DRIVE_FOLDER_ID environment variable.
+    Upload a CV PDF to Google Drive via the compiler service.
 
     Args:
         pdf_path: Absolute local path to the compiled CV PDF.
@@ -122,70 +118,22 @@ def upload_cv_to_drive(pdf_path: str, job_position: str) -> dict:
         Dict with: status, file_id, cv_url, filename.
     """
     if not os.path.isfile(pdf_path):
-        return {"status": "error", "error": f"PDF not found: {pdf_path}"}
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
-    position_slug = _sanitize_position(job_position)
-    filename = f"Andrii_Popesku_{position_slug}.pdf"
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
 
-    try:
-        creds = _get_credentials()
-        drive_svc = build("drive", "v3", credentials=creds)
+    resp = requests.post(
+        f"{_COMPILER_URL}/upload-to-drive",
+        files={"pdf": ("cv.pdf", pdf_bytes, "application/pdf")},
+        data={"job_position": job_position},
+        headers=_auth_headers(),
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Upload service error ({resp.status_code}): {resp.text}")
 
-        def _upload(parent: str | None) -> dict:
-            metadata: dict = {"name": filename, "mimeType": "application/pdf"}
-            if parent:
-                metadata["parents"] = [parent]
-            media = MediaFileUpload(pdf_path, mimetype="application/pdf", resumable=False)
-            f = drive_svc.files().create(
-                body=metadata,
-                media_body=media,
-                fields="id,name,webViewLink",
-            ).execute()
-            return f
-
-        # Try the configured folder first; fall back to Drive root on 404
-        uploaded_to_folder = False
-        try:
-            if folder_id:
-                file = _upload(folder_id)
-                uploaded_to_folder = True
-            else:
-                file = _upload(None)
-        except Exception as folder_err:
-            if folder_id and "404" in str(folder_err):
-                print(
-                    f"[google_tools] Folder {folder_id!r} not accessible "
-                    f"({folder_err}); uploading to Drive root instead."
-                )
-                file = _upload(None)
-            else:
-                raise
-
-        file_id = file["id"]
-        cv_url = file.get("webViewLink", f"https://drive.google.com/file/d/{file_id}/view")
-
-        # Make the file readable by anyone with the link
-        drive_svc.permissions().create(
-            fileId=file_id,
-            body={"type": "anyone", "role": "reader"},
-        ).execute()
-
-        result = {
-            "status": "ok",
-            "file_id": file_id,
-            "filename": filename,
-            "cv_url": cv_url,
-        }
-        if folder_id and not uploaded_to_folder:
-            result["warning"] = (
-                f"Folder ID {folder_id!r} was not accessible — file uploaded to Drive root. "
-                "To fix: open the folder in Drive, click Share, and add your Google account with Editor access."
-            )
-        return result
-
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+    return resp.json()
 
 
 def log_application_to_sheets(
@@ -199,8 +147,6 @@ def log_application_to_sheets(
 
     Columns: job_link | company | position | cv_url | status (default: draft)
 
-    Requires GOOGLE_SHEETS_ID to be set in the environment.
-
     Args:
         job_link: URL of the job posting.
         company: Company name.
@@ -212,31 +158,32 @@ def log_application_to_sheets(
     """
     sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
     if not sheet_id:
-        return {
-            "status": "error",
-            "error": "GOOGLE_SHEETS_ID is not set. Add it to your .env file.",
-        }
+        raise ValueError("GOOGLE_SHEETS_ID is not set. Add it to your .env file.")
 
-    try:
-        creds = _get_credentials()
-        sheets_svc = build("sheets", "v4", credentials=creds)
+    creds = _get_credentials()
+    sheets_svc = build("sheets", "v4", credentials=creds)
 
-        tab = _resolve_tab_name(sheets_svc, sheet_id)
-        row = [job_link, company, position, cv_url, _DEFAULT_STATUS]
-        sheets_svc.spreadsheets().values().append(
-            spreadsheetId=sheet_id,
-            range=f"'{tab}'!A1",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={"values": [row]},
-        ).execute()
+    tab = _resolve_tab_name(sheets_svc, sheet_id)
+    row = [job_link, company, position, cv_url, _DEFAULT_STATUS]
 
-        spreadsheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        return {
-            "status": "ok",
-            "spreadsheet_url": spreadsheet_url,
-            "row_added": row,
-        }
+    # Find the actual last occupied row to avoid appending after 1000 empty table rows.
+    result = sheets_svc.spreadsheets().values().get(
+        spreadsheetId=sheet_id,
+        range=f"'{tab}'!A:A",
+    ).execute()
+    existing_rows = len(result.get("values", []))
+    next_row = existing_rows + 1
 
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
+    sheets_svc.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"'{tab}'!A{next_row}",
+        valueInputOption="RAW",
+        body={"values": [row]},
+    ).execute()
+
+    spreadsheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+    return {
+        "status": "ok",
+        "spreadsheet_url": spreadsheet_url,
+        "row_added": row,
+    }

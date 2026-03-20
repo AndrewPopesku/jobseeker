@@ -1,9 +1,24 @@
 import os
-import subprocess
-import tempfile
 
+import requests
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
+
+import google.auth.transport.requests
+import google.oauth2.id_token
+
+
+_COMPILER_URL = os.environ.get("COMPILER_SERVICE_URL", "http://localhost:8081")
+
+
+def _auth_headers() -> dict:
+    """Return auth headers for Cloud Run service-to-service calls."""
+    if _COMPILER_URL.startswith("http://"):
+        return {}  # local dev, no auth needed
+    token = google.oauth2.id_token.fetch_id_token(
+        google.auth.transport.requests.Request(), _COMPILER_URL
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ---------------------------------------------------------------------------
@@ -29,157 +44,192 @@ def _escape(text: str) -> str:
     return text
 
 
-def _items(bullets: list[str]) -> str:
-    lines = [r"    \begin{itemize}[leftmargin=*, nosep, topsep=2pt]"]
-    for b in bullets:
-        lines.append(f"        \\item {_escape(b)}")
-    lines.append(r"    \end{itemize}")
-    return "\n".join(lines)
+def _resume_item(text: str) -> str:
+    return f"    \\resumeItem{{{_escape(text)}}}"
+
+
+def _subheading(col1: str, col2: str, col3: str, col4: str) -> str:
+    return (
+        "    \\resumeSubheading\n"
+        f"      {{{_escape(col1)}}}{{{_escape(col2)}}}\n"
+        f"      {{{_escape(col3)}}}{{{_escape(col4)}}}"
+    )
 
 
 def _build_latex(user_data: dict) -> str:
     """Render the LaTeX source from user_data dict."""
     name = _escape(user_data.get("name", "Your Name"))
     location = _escape(user_data.get("location", ""))
-    phone = _escape(user_data.get("phone", ""))
+    phone = user_data.get("phone", "")
     email = user_data.get("email", "")
     linkedin = user_data.get("linkedin", "")
     summary = _escape(user_data.get("summary", ""))
 
-    contact_parts = []
-    if location:
-        contact_parts.append(location)
-    if phone:
-        contact_parts.append(phone)
-    if email:
-        contact_parts.append(
-            r"\href{mailto:" + email + r"}{\underline{" + _escape(email) + r"}}"
-        )
-    if linkedin:
-        display = linkedin.replace("https://", "").replace("http://", "")
-        contact_parts.append(
-            r"\href{" + linkedin + r"}{\underline{" + _escape(display) + r"}}"
-        )
-    contact_line = r" $|$ ".join(contact_parts)
+    contact_line = (
+        f"    \\small {_escape(location)}"
+        + (f" $|$ \\faPhone\\ {_escape(phone)}" if phone else "")
+        + (f" $|$ \\faEnvelope\\ \\href{{mailto:{email}}}{{\\underline{{{_escape(email)}}}}}" if email else "")
+        + (f" $|$ \\faLinkedin\\ \\href{{{linkedin}}}{{\\underline{{{_escape(linkedin.replace('https://', '').replace('http://', ''))}}}}}" if linkedin else "")
+    )
 
     skills_lines = []
     for category, items in user_data.get("skills", {}).items():
         items_str = _escape(", ".join(items) if isinstance(items, list) else str(items))
-        skills_lines.append(
-            f"    \\item \\textbf{{{_escape(category)}:}} {items_str}"
-        )
+        skills_lines.append(f"     \\textbf{{{_escape(category)}}}{{: {items_str}}} \\\\")
     skills_block = "\n".join(skills_lines)
 
     exp_blocks = []
     for job in user_data.get("experience", []):
+        bullets = "\n".join(_resume_item(b) for b in job.get("bullets", []))
         exp_blocks.append(
-            f"    \\textbf{{{_escape(job.get('company', ''))}}} \\hfill {_escape(job.get('dates', ''))} \\\\\n"
-            f"    \\textit{{{_escape(job.get('title', ''))}}} \\hfill {_escape(job.get('location', ''))}\n"
-            + _items(job.get("bullets", []))
-            + "\n    \\vspace{6pt}"
+            _subheading(job.get("company", ""), job.get("location", ""), job.get("title", ""), job.get("dates", ""))
+            + "\n      \\resumeItemListStart\n"
+            + bullets
+            + "\n      \\resumeItemListEnd"
         )
     experience_block = "\n\n".join(exp_blocks)
 
     edu_blocks = []
     for edu in user_data.get("education", []):
         edu_blocks.append(
-            f"    \\textbf{{{_escape(edu.get('school', ''))}}} \\hfill {_escape(edu.get('dates', ''))} \\\\\n"
-            f"    \\textit{{{_escape(edu.get('degree', ''))}}} \\hfill {_escape(edu.get('location', ''))}"
+            _subheading(edu.get("school", ""), edu.get("location", ""), edu.get("degree", ""), edu.get("dates", ""))
         )
     education_block = "\n\n".join(edu_blocks)
 
-    cert_section = ""
-    if user_data.get("certifications"):
-        cert_lines = [f"    \\item {_escape(c)}" for c in user_data["certifications"]]
-        cert_section = (
-            r"\section*{CERTIFICATIONS}"
-            + "\n\\begin{itemize}[leftmargin=*, nosep]\n"
-            + "\n".join(cert_lines)
-            + "\n\\end{itemize}"
+    hackathon_block = ""
+    if user_data.get("hackathons"):
+        items = []
+        for h in user_data["hackathons"]:
+            bullets = "\n".join(_resume_item(b) for b in h.get("bullets", []))
+            items.append(
+                _subheading(h.get("title", ""), h.get("location", ""), h.get("role", ""), h.get("dates", ""))
+                + "\n      \\resumeItemListStart\n"
+                + bullets
+                + "\n      \\resumeItemListEnd"
+            )
+        hackathon_block = (
+            "\\section{Hackathon}\n  \\resumeSubHeadingListStart\n"
+            + "\n\n".join(items)
+            + "\n  \\resumeSubHeadingListEnd\n"
         )
 
-    return rf"""
-\documentclass[10pt, letterpaper]{{article}}
+    cert_section = ""
+    if user_data.get("certifications"):
+        cert_lines = "\n".join(f"    \\resumeItem{{{_escape(c)}}}" for c in user_data["certifications"])
+        cert_section = (
+            "\\section{Certifications}\n  \\resumeSubHeadingListStart\n"
+            "  \\resumeItemListStart\n"
+            + cert_lines
+            + "\n  \\resumeItemListEnd\n  \\resumeSubHeadingListEnd"
+        )
 
-\usepackage[top=0.5in, bottom=0.5in, left=0.6in, right=0.6in]{{geometry}}
-\usepackage{{enumitem}}
-\usepackage{{hyperref}}
-\usepackage{{titlesec}}
-\usepackage{{parskip}}
-\usepackage[T1]{{fontenc}}
-\usepackage[utf8]{{inputenc}}
+    preamble = r"""
+\documentclass[letterpaper,11pt]{article}
 
-\hypersetup{{colorlinks=true, urlcolor=black, linkcolor=black}}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{fontawesome5}
 
-\titleformat{{\section}}{{\large\bfseries\scshape}}{{}}{{0em}}{{}}[\titlerule]
-\titlespacing*{{\section}}{{0pt}}{{6pt}}{{4pt}}
+\ifdefined\pdfgentounicode
+  \input{glyphtounicode}
+  \pdfgentounicode=1
+\fi
 
-\setlength{{\parindent}}{{0pt}}
-\setlength{{\parskip}}{{0pt}}
-\pagestyle{{empty}}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
 
-\begin{{document}}
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
 
-\begin{{center}}
-    {{\LARGE \textbf{{{name}}}}} \\[4pt]
-    {contact_line}
-\end{{center}}
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
 
-\vspace{{2pt}}
+\titleformat{\section}{\vspace{-4pt}\scshape\raggedright\large\bfseries}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
 
-\section*{{SUMMARY}}
-{summary}
+\newcommand{\resumeItem}[1]{\item\small{{#1 \vspace{-2pt}}}}
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+"""
 
-\section*{{TECHNICAL SKILLS}}
-\begin{{itemize}}[leftmargin=*, nosep, topsep=2pt]
+    body = f"""
+\\begin{{document}}
+
+\\begin{{center}}
+    \\textbf{{\\Huge \\scshape {name}}} \\\\ \\vspace{{3pt}}
+{contact_line}
+\\end{{center}}
+
+\\section{{Summary}}
+\\small{{{summary}}}
+
+\\section{{Technical Skills}}
+ \\begin{{itemize}}[leftmargin=0.15in, label={{}}]
+    \\small{{\\item{{
 {skills_block}
-\end{{itemize}}
+    }}}}
+ \\end{{itemize}}
 
-\section*{{EXPERIENCE}}
+{hackathon_block}
+
+\\section{{Experience}}
+  \\resumeSubHeadingListStart
 {experience_block}
+  \\resumeSubHeadingListEnd
 
-\section*{{EDUCATION}}
+\\section{{Education}}
+  \\resumeSubHeadingListStart
 {education_block}
+  \\resumeSubHeadingListEnd
 
 {cert_section}
 
-\end{{document}}
-""".strip()
+\\end{{document}}
+"""
+
+    return (preamble + body).strip()
 
 
 # ---------------------------------------------------------------------------
-# Tectonic helper
+# Compiler service client
 # ---------------------------------------------------------------------------
 
-def _find_tectonic() -> str | None:
-    for candidate in ["/opt/homebrew/bin/tectonic", "/usr/local/bin/tectonic", "tectonic"]:
-        try:
-            subprocess.run([candidate, "--version"], capture_output=True, check=True)
-            return candidate
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            continue
-    return None
-
-
-def _compile_tex(tex_path: str) -> dict:
-    """Compile a .tex file with tectonic. Returns dict with pdf_path or error."""
-    tectonic = _find_tectonic()
-    if not tectonic:
-        return {"error": "tectonic not found. Install with: brew install tectonic"}
-
-    output_dir = os.path.dirname(tex_path)
-    result = subprocess.run(
-        [tectonic, "--outdir", output_dir, tex_path],
-        capture_output=True, text=True, timeout=120,
+def _compile_remote(latex_source: str) -> bytes:
+    """Send LaTeX source to the compiler service, return PDF bytes."""
+    resp = requests.post(
+        f"{_COMPILER_URL}/compile",
+        json={"latex_source": latex_source},
+        headers=_auth_headers(),
+        timeout=120,
     )
-    if result.returncode != 0:
-        return {"error": result.stderr or result.stdout}
-
-    pdf_path = tex_path.replace(".tex", ".pdf")
-    if not os.path.isfile(pdf_path):
-        return {"error": "PDF not produced after compilation."}
-
-    return {"pdf_path": pdf_path}
+    if resp.status_code != 200:
+        raise RuntimeError(f"Compiler service error ({resp.status_code}): {resp.text}")
+    return resp.content
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +245,7 @@ async def generate_and_compile_cv(
 ) -> dict:
     """
     Generate a tailored LaTeX CV from structured user data, compile it to PDF
-    with Tectonic, and save it as a versioned artifact.
+    via the compiler service, and save it as a versioned artifact.
 
     Args:
         user_data: Dictionary with keys:
@@ -211,75 +261,50 @@ async def generate_and_compile_cv(
             - certifications (list, optional)
 
     Returns:
-        Dict with: status, version (int), tex_path, pdf_path, message.
+        Dict with: status, version (int), latex_source, message.
     """
-    tmp_dir = tempfile.mkdtemp(prefix="cv_")
-    tex_path = os.path.join(tmp_dir, "cv.tex")
-
     latex_source = _build_latex(user_data)
-    with open(tex_path, "w", encoding="utf-8") as f:
-        f.write(latex_source)
-
-    compile_result = _compile_tex(tex_path)
-    if "error" in compile_result:
-        return {"status": "error", "error": compile_result["error"], "tex_path": tex_path}
-
-    pdf_path = compile_result["pdf_path"]
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
+    pdf_bytes = _compile_remote(latex_source)
 
     version = await tool_context.save_artifact(
         _CV_ARTIFACT_NAME,
         types.Part(inline_data=types.Blob(mime_type="application/pdf", data=pdf_bytes)),
-        custom_metadata={"tex_path": tex_path},
+        custom_metadata={"latex_source": latex_source},
     )
 
     return {
         "status": "ok",
         "version": version,
-        "tex_path": tex_path,
-        "pdf_path": pdf_path,
+        "latex_source": latex_source,
         "message": f"CV compiled and saved as artifact '{_CV_ARTIFACT_NAME}' version {version}.",
     }
 
 
 async def update_cv_from_latex(
-    tex_file_path: str,
     updated_latex_source: str,
     tool_context: ToolContext,
 ) -> dict:
     """
-    Overwrite an existing .tex file with updated LaTeX source, recompile,
+    Compile updated LaTeX source to PDF via the compiler service
     and save a new artifact version.
 
     Args:
-        tex_file_path: Absolute path to the .tex file from a previous generate_and_compile_cv call.
         updated_latex_source: Full updated LaTeX source string.
 
     Returns:
-        Dict with: status, version (int), pdf_path, message.
+        Dict with: status, version (int), message.
     """
-    with open(tex_file_path, "w", encoding="utf-8") as f:
-        f.write(updated_latex_source)
-
-    compile_result = _compile_tex(tex_file_path)
-    if "error" in compile_result:
-        return {"status": "error", "error": compile_result["error"]}
-
-    pdf_path = compile_result["pdf_path"]
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
+    pdf_bytes = _compile_remote(updated_latex_source)
 
     version = await tool_context.save_artifact(
         _CV_ARTIFACT_NAME,
         types.Part(inline_data=types.Blob(mime_type="application/pdf", data=pdf_bytes)),
-        custom_metadata={"tex_path": tex_file_path},
+        custom_metadata={"latex_source": updated_latex_source},
     )
 
     return {
         "status": "ok",
         "version": version,
-        "pdf_path": pdf_path,
         "message": f"CV updated and saved as artifact '{_CV_ARTIFACT_NAME}' version {version}.",
     }
 
@@ -293,7 +318,7 @@ async def list_cv_versions(tool_context: ToolContext) -> dict:
     """
     svc = tool_context._invocation_context.artifact_service
     if svc is None:
-        return {"error": "Artifact service not configured. Run via 'adk web' or with FileArtifactService."}
+        raise RuntimeError("Artifact service not configured. Run via 'adk web' or with FileArtifactService.")
 
     inv = tool_context._invocation_context
     versions = await svc.list_versions(
@@ -323,10 +348,10 @@ async def export_cv_version(version: int, output_path: str, tool_context: ToolCo
     """
     part = await tool_context.load_artifact(_CV_ARTIFACT_NAME, version=version)
     if part is None:
-        return {"status": "error", "error": f"Version {version} of '{_CV_ARTIFACT_NAME}' not found."}
+        raise ValueError(f"Version {version} of '{_CV_ARTIFACT_NAME}' not found.")
 
     if not part.inline_data or not part.inline_data.data:
-        return {"status": "error", "error": "Artifact has no binary data."}
+        raise ValueError("Artifact has no binary data.")
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "wb") as f:
