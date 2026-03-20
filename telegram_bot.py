@@ -61,6 +61,43 @@ _runner = Runner(
 # One persistent session per Telegram user_id  →  agent remembers context
 _sessions: dict[int, str] = {}
 
+# ---------------------------------------------------------------------------
+# Message batch buffer
+# Telegram splits long messages into multiple updates sent within milliseconds
+# of each other. We buffer incoming parts for BATCH_WINDOW_SECS seconds and
+# then fire the agent once with everything joined together.
+# ---------------------------------------------------------------------------
+
+BATCH_WINDOW_SECS = 0.8  # seconds to wait for more chunks before processing
+
+# per-user buffer: list of (parts, reply_fn) tuples collected so far
+_batch_parts: dict[int, list[types.Part]] = {}
+# per-user: the last Update (used to send the reply)
+_batch_update: dict[int, Update] = {}
+# per-user: pending debounce task
+_batch_tasks: dict[int, asyncio.Task] = {}
+
+
+async def _flush_batch(tg_user_id: int, chat_id: int, bot) -> None:
+    """Called after BATCH_WINDOW_SECS to process all buffered parts at once."""
+    parts = _batch_parts.pop(tg_user_id, [])
+    update = _batch_update.pop(tg_user_id, None)
+    _batch_tasks.pop(tg_user_id, None)
+
+    if not parts or update is None:
+        return
+
+    await bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
+
+    try:
+        reply = await _run_agent(tg_user_id, parts)
+    except Exception as e:
+        log.exception("Agent error for user %d", tg_user_id)
+        reply = f"⚠️ Agent error: {e}"
+
+    for chunk in _split(reply, 4096):
+        await update.message.reply_text(chunk)
+
 
 async def _get_or_create_session(tg_user_id: int) -> str:
     if tg_user_id not in _sessions:
@@ -178,21 +215,28 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     if not parts:
         return
 
-    # Show typing indicator while the agent works
-    await ctx.bot.send_chat_action(
-        chat_id=update.effective_chat.id,
-        action=constants.ChatAction.TYPING,
+    # --- Batch buffering ---
+    # Append this chunk's parts to the user's buffer
+    if tg_user_id not in _batch_parts:
+        _batch_parts[tg_user_id] = []
+    _batch_parts[tg_user_id].extend(parts)
+    _batch_update[tg_user_id] = update  # keep the latest update for replying
+
+    # Cancel existing debounce timer and restart it
+    existing = _batch_tasks.get(tg_user_id)
+    if existing and not existing.done():
+        existing.cancel()
+
+    loop = asyncio.get_event_loop()
+    _batch_tasks[tg_user_id] = loop.create_task(
+        _delayed_flush(tg_user_id, update.effective_chat.id, ctx.bot)
     )
 
-    try:
-        reply = await _run_agent(tg_user_id, parts)
-    except Exception as e:
-        log.exception("Agent error for user %d", tg_user_id)
-        reply = f"⚠️ Agent error: {e}"
 
-    # Telegram messages max out at 4096 chars — split if needed
-    for chunk in _split(reply, 4096):
-        await update.message.reply_text(chunk)
+async def _delayed_flush(tg_user_id: int, chat_id: int, bot) -> None:
+    """Wait for the batch window, then flush."""
+    await asyncio.sleep(BATCH_WINDOW_SECS)
+    await _flush_batch(tg_user_id, chat_id, bot)
 
 
 def _split(text: str, max_len: int) -> list[str]:
