@@ -2,12 +2,14 @@
 Google Drive + Sheets integration for job application tracking.
 
 Drive uploads are handled by the compiler service.
-This module handles Sheets logging only.
+This module handles Sheets logging and CV data storage on Drive.
 """
 
 from __future__ import annotations
 
+import json as _json
 import os
+from io import BytesIO
 from pathlib import Path
 
 import requests
@@ -17,14 +19,20 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
+# NOTE: Adding drive scope requires re-authentication on first run after deploy.
+# Delete token.json / writable token file to trigger fresh OAuth consent.
 _SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
 ]
+
+_CV_DATA_FILENAME = "data.json"
 
 _HERE = Path(__file__).parent
 _CREDENTIALS_FILE = Path(os.environ.get("GOOGLE_CREDENTIALS_FILE", str(_HERE / "credentials.json")))
@@ -187,3 +195,79 @@ def log_application_to_sheets(
         "spreadsheet_url": spreadsheet_url,
         "row_added": row,
     }
+
+
+# ---------------------------------------------------------------------------
+# CV data storage on Google Drive
+# ---------------------------------------------------------------------------
+
+def load_cv_data_from_drive() -> dict | None:
+    """
+    Load the user's CV data (data.json) from Google Drive.
+
+    Returns the parsed dict, or None if the file doesn't exist yet.
+    """
+    folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+    if not folder_id:
+        raise ValueError("GOOGLE_DRIVE_FOLDER_ID is not set. Add it to your .env file.")
+
+    creds = _get_credentials()
+    drive_svc = build("drive", "v3", credentials=creds)
+
+    results = drive_svc.files().list(
+        q=f"name='{_CV_DATA_FILENAME}' and '{folder_id}' in parents and trashed=false",
+        fields="files(id, name)",
+        pageSize=1,
+    ).execute()
+
+    files = results.get("files", [])
+    if not files:
+        return None
+
+    file_id = files[0]["id"]
+    request = drive_svc.files().get_media(fileId=file_id)
+    buf = BytesIO()
+    downloader = MediaIoBaseDownload(buf, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    return _json.loads(buf.getvalue().decode("utf-8"))
+
+
+def save_cv_data_to_drive(data: dict) -> str:
+    """
+    Save the user's CV data as data.json in the configured Google Drive folder.
+
+    Creates the file if it doesn't exist; updates it if it does.
+    Returns the Google Drive view URL of the file.
+    """
+    folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+    if not folder_id:
+        raise ValueError("GOOGLE_DRIVE_FOLDER_ID is not set. Add it to your .env file.")
+
+    creds = _get_credentials()
+    drive_svc = build("drive", "v3", credentials=creds)
+
+    content = _json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+    media = MediaIoBaseUpload(BytesIO(content), mimetype="application/json", resumable=False)
+
+    # Check if the file already exists in the folder
+    results = drive_svc.files().list(
+        q=f"name='{_CV_DATA_FILENAME}' and '{folder_id}' in parents and trashed=false",
+        fields="files(id)",
+        pageSize=1,
+    ).execute()
+    files = results.get("files", [])
+
+    if files:
+        file_id = files[0]["id"]
+        drive_svc.files().update(fileId=file_id, media_body=media).execute()
+    else:
+        meta = {"name": _CV_DATA_FILENAME, "parents": [folder_id]}
+        result = drive_svc.files().create(
+            body=meta, media_body=media, fields="id"
+        ).execute()
+        file_id = result["id"]
+
+    return f"https://drive.google.com/file/d/{file_id}/view"
