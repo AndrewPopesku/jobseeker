@@ -29,7 +29,7 @@ app = FastAPI(title="CV Compiler")
 # ---------------------------------------------------------------------------
 
 _SCOPES = [
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive",
 ]
 
 _CREDENTIALS_FILE = Path(
